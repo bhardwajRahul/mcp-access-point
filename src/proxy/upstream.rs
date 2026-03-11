@@ -5,7 +5,10 @@ use http::Uri;
 use log::info;
 use once_cell::sync::Lazy;
 use pingora::services::background::background_service;
-use pingora_core::{services::Service, upstreams::peer::HttpPeer};
+use pingora_core::{
+    services::{ServiceReadyNotifier, ServiceWithDependents},
+    upstreams::peer::HttpPeer,
+};
 use pingora_error::{Error, Result};
 use pingora_http::{RequestHeader, ResponseHeader};
 use pingora_load_balancing::{
@@ -88,12 +91,14 @@ impl ProxyUpstream {
 
             // Spawn the service on the runtime
             runtime.get_handle().spawn(async move {
+                let (ready_tx, _ready_rx) = watch::channel(false);
                 service
                     .start_service(
                         #[cfg(unix)]
                         None,
                         watch_rx,
                         1,
+                        ServiceReadyNotifier::new(ready_tx),
                     )
                     .await;
                 info!("Service exited.");
@@ -159,7 +164,7 @@ impl ProxyUpstream {
     }
 
     /// Takes the background service if it exists.
-    fn take_background_service(&mut self) -> Option<Box<dyn Service + 'static>> {
+    fn take_background_service(&mut self) -> Option<Box<dyn ServiceWithDependents + 'static>> {
         match self.lb {
             SelectionLB::RoundRobin(ref mut lb) => lb.service.take(),
             SelectionLB::Random(ref mut lb) => lb.service.take(),
@@ -238,7 +243,7 @@ impl TryFrom<config::Upstream> for SelectionLB {
 
 struct LB<BS: BackendSelection> {
     upstreams: Arc<LoadBalancer<BS>>,
-    service: Option<Box<dyn Service + 'static>>,
+    service: Option<Box<dyn ServiceWithDependents + 'static>>,
 }
 
 impl<BS> TryFrom<config::Upstream> for LB<BS>

@@ -194,22 +194,15 @@ impl ProxyHttp for MCPProxyService {
         session: &mut Session,
         ctx: &mut Self::CTX,
     ) -> Result<Box<HttpPeer>> {
-        // log::debug!("upstream_peer{:?}", ctx.route);
-        let peer = match ctx.route.clone().as_ref() {
-            Some(route) => route.select_http_peer(session),
-            None => {
-                //  Handle the case where the common route is not found
-                log::debug!(
-                    "upstream_peer upstream_id: {:#?}",
-                    ctx.route_mcp.clone().unwrap().inner
-                );
-                //  handle the mcp route
-                // ctx.route_mcp configuration is set in the request_filter phase
-                // see details in the src/mcp/tools.rs file
-                // and is used to select the upstream peer for the request.
-                ctx.route_mcp.clone().unwrap().select_http_peer(session)
-            }
+        let Some(route) = ctx.route.clone() else {
+            let path = session.req_header().uri.path();
+            log::error!("No route configured for upstream request: {path}");
+            return Err(Error::new_str(
+                "No route configured for request that attempted upstream proxying",
+            ));
         };
+
+        let peer = route.select_http_peer(session);
 
         if let Ok(ref peer) = peer {
             ctx.vars
@@ -266,11 +259,13 @@ impl ProxyHttp for MCPProxyService {
         }
         //  insert headers from route configuration
         //  see details in the src/config/route.rs file
-        for header in ctx.route.as_ref().unwrap().get_headers() {
-            if header.0 == "Host" {
-                continue;
+        if let Some(route) = ctx.route.as_ref() {
+            for header in route.get_headers() {
+                if header.0 == "Host" {
+                    continue;
+                }
+                upstream_request.insert_header(header.0, header.1.as_str())?;
             }
-            upstream_request.insert_header(header.0, header.1.as_str())?;
         }
         // Set Content-Length header based on ctx.vars["new_body_len"] if present
         if let Some(len) = ctx.vars.get("new_body_len") {
@@ -281,7 +276,7 @@ impl ProxyHttp for MCPProxyService {
         Ok(())
     }
 
-    fn upstream_response_filter(
+    async fn upstream_response_filter(
         &self,
         session: &mut Session,
         upstream_response: &mut ResponseHeader,
@@ -379,7 +374,7 @@ impl ProxyHttp for MCPProxyService {
         body: &mut Option<Bytes>,
         end_of_stream: bool,
         ctx: &mut Self::CTX,
-    ) -> Result<()> {
+    ) -> Result<Option<Duration>> {
         let path = session.req_header().uri.path();
         log::debug!("upstream_response_body_filter for path: {path}");
         log::debug!("end_of_stream: {end_of_stream}");
@@ -402,7 +397,7 @@ impl ProxyHttp for MCPProxyService {
             }
         }
 
-        Ok(())
+        Ok(None)
     }
 
     /// Filters the response body.

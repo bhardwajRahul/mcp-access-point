@@ -182,7 +182,7 @@ fn add_listeners(
 fn add_optional_services(server: &mut Server, cfg: &config::AccessPointConfig) {
     if let Some(sentry_cfg) = &cfg.sentry {
         log::info!("Adding Sentry config...");
-        server.sentry = Some(sentry::ClientOptions {
+        server.set_sentry_config(sentry::ClientOptions {
             dsn: sentry_cfg
                 .dsn
                 .clone()
